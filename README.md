@@ -14,11 +14,11 @@ Tested only on macOS (version 27).
 
 Download the installer from the releases page.
 
-**macOS:** open the `.dmg` and drag Smoke Break to Applications. The app isn't notarized, so macOS blocks the first launch. Try to open it once, then go to System Settings > Privacy & Security and choose Open Anyway.
+**macOS:** open the `.dmg` and drag Smoke Break to Applications. 
 
-The first break asks for Screen Recording permission, which the live desktop needs. Audio capture permission makes other apps sound distant. After granting them, quit and reopen the app.
+it isn't notorized, so expect permission pop-ups.
 
-**Windows:** (untested) run the installer. It isn't code signed, so SmartScreen may warn you. Choose More info, then Run anyway. The Windows version is new and has had little real-world testing, so please report any problems.
+**Windows:** (untested) run the installer. it isn't code signed, expect warnings.
 
 ## License
 
