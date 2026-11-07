@@ -1,5 +1,3 @@
-# Smoke Break App
-
 sometimes you just need a break
 
 ## features
@@ -12,7 +10,7 @@ Press any key during a break to end it early. Right-click the icon for settings.
 
 Tested only on macOS (version 27).
 
-## installing it
+## installation
 
 Download the installer from the releases page.
 
@@ -21,15 +19,6 @@ Download the installer from the releases page.
 The first break asks for Screen Recording permission, which the live desktop needs. Audio capture permission makes other apps sound distant. After granting them, quit and reopen the app.
 
 **Windows:** (untested) run the installer. It isn't code signed, so SmartScreen may warn you. Choose More info, then Run anyway. The Windows version is new and has had little real-world testing, so please report any problems.
-
-## building it
-
-```sh
-npm install
-npm start          # run from source
-npm run dist:mac   # build the .dmg
-npm run dist:win   # build the Windows installer
-```
 
 ## License
 
