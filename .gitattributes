@@ -1,0 +1,7 @@
+# Keeps line endings consistent for clones on any OS, and marks media as binary.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+*.mp4 binary
+*.webm binary

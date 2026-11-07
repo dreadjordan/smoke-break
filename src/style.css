@@ -1,0 +1,26 @@
+/* Layout for Smoke Break's single window: the desktop canvas fills the window and the smoking overlay sits on top.
+   No scrollbars, selection or cursor until the mouse moves. */
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  user-select: none;
+  cursor: none;
+}
+
+#desktop,
+#overlay {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#overlay {
+  pointer-events: none;
+}
+
+body.pointer-active {
+  cursor: default;
+}

@@ -1,0 +1,14 @@
+# Dependencies and build output
+node_modules/
+dist/
+native/desktop-stream
+
+# OS and tool leftovers
+.DS_Store
+__pycache__/
+
+# Camera originals and media kept outside the repository; the app uses the converted files in src/assets
+*.MTS
+cig_animation.mp4
+landscape_1.mp4
+sound_effects/

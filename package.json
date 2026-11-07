@@ -1,0 +1,65 @@
+{
+  "name": "smoke-break",
+  "productName": "Smoke Break",
+  "version": "1.0.0",
+  "description": "A menu bar smoke break: step back from your desktop, smoke a first-person cigarette down to the filter, then dash back.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "build:helper": "[ native/desktop-stream -nt native/desktop-stream.swift -a native/desktop-stream -nt native/distant-audio.swift ] || swiftc -O -target arm64-apple-macos14.2 -parse-as-library native/desktop-stream.swift native/distant-audio.swift -o native/desktop-stream",
+    "prestart": "npm run --silent build:helper",
+    "start": "electron .",
+    "dist:mac": "npm run --silent build:helper && electron-builder --mac --arm64",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "author": "Jordan (aka DreadJordan)",
+  "license": "MIT",
+  "build": {
+    "appId": "com.dreadjordan.smokebreak",
+    "copyright": "Copyright © 2026 Jordan (aka DreadJordan)",
+    "asar": false,
+    "electronLanguages": [
+      "en"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "desktop-stream.js",
+      "snapshot-stream.js",
+      "hotkey-window.js",
+      "assets/**",
+      "src/**"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.lifestyle",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "minimumSystemVersion": "14.2",
+      "files": [
+        "native/desktop-stream"
+      ],
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSAudioCaptureUsageDescription": "Smoke Break makes other apps sound distant while you step back from the screen.",
+        "NSScreenCaptureUsageDescription": "Smoke Break shows your live desktop across the room during a break."
+      }
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
+  }
+}
