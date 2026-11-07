@@ -50,9 +50,10 @@ const AUTOMATIC_BREAKS = [
   { label: 'Every 30 Minutes', minutes: 30 },
   { label: 'Every 60 Minutes', minutes: 60 },
 ];
+const VOLUMES = [100, 75, 50, 25, 0];
 const CREATOR_LINK = 'https://x.com/dreadjordan';
 const DEFAULT_HOTKEY = defaultHotkey(process.platform);
-const DEFAULT_SETTINGS = { breakSeconds: 30, automaticMinutes: 0, fillBackground: false, sound: true, hotkey: DEFAULT_HOTKEY };
+const DEFAULT_SETTINGS = { breakSeconds: 30, automaticMinutes: 0, fillBackground: false, sound: true, volume: 100, hotkey: DEFAULT_HOTKEY };
 
 let settings = null;
 let automaticBreakTimer = null;
@@ -90,6 +91,12 @@ function changeSetting(key, value) {
 ipcMain.on('get-settings', (event) => {
   event.returnValue = settings;
 });
+
+// Why: a screen zoom in another app, such as DreadDraw's, redraws a capture of the display over it. With both apps capturing, each
+// films the other and the view goes black, so it needs to know when to step aside and when it may zoom again.
+function announceBreak(state) {
+  if (process.platform === 'darwin') systemPreferences.postNotification(`com.dreadjordan.smokebreak.${state}`, {}, true);
+}
 
 // Why: without this permission the capture comes back empty and the break could never appear, so send the user to grant it instead.
 async function hasScreenPermission() {
@@ -140,6 +147,7 @@ function prepareBreak() {
     breakVisible = false;
     desktopStream.end();
     breakRunning = false;
+    announceBreak('ended');
     // Why: quitting closes this window too, and preparing a new one here would cancel the quit.
     if (quitting) return;
     prepareBreak();
@@ -154,6 +162,7 @@ function prepareBreak() {
 async function startBreak() {
   if (breakRunning || !(await hasScreenPermission())) return;
   breakRunning = true;
+  announceBreak('began');
   const { window, pageLoaded } = preparedBreak;
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   window.setBounds(display.bounds);
@@ -262,6 +271,15 @@ function buildMenu() {
           click: () => changeSetting('fillBackground', !settings.fillBackground),
         },
         { label: 'Sound', type: 'checkbox', checked: settings.sound, click: () => changeSetting('sound', !settings.sound) },
+        {
+          label: 'Volume',
+          submenu: VOLUMES.map((volume) => ({
+            label: `${volume}%`,
+            type: 'radio',
+            checked: settings.volume === volume,
+            click: () => changeSetting('volume', volume),
+          })),
+        },
         { type: 'separator' },
         { label: 'Info…', click: showInfo },
       ],

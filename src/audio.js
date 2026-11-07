@@ -2,24 +2,28 @@
 // The ambience, dash and lighter are recordings; the inhale is synthesised here.
 'use strict';
 
+// Why: the Volume setting's 100% is this much of full level; at 1 the whole break played too loud.
+const MAXIMUM_VOLUME = 0.7;
 const AMBIENCE_FADE_IN_SECONDS = 4;
-const AMBIENCE_VOLUME = 0.8;
+const AMBIENCE_VOLUME = 0.56;
 // Why: most of the recording's energy is rumble below 60Hz; two stacked filters clear it without thinning the room above.
 const AMBIENCE_RUMBLE_CUT_HERTZ = 100;
 // Why: level with the room recording or above, the inhale read as loud and harsh; it sits under the room as a soft breath.
 const INHALE_VOLUME = 0.1;
 const CRACKLE_LEVEL = 0.12;
-const DASH_VOLUME = 0.375;
+const DASH_VOLUME = 0.133;
 // Why: the whoosh peaks 0.65s into its recording but a dash is fastest at its very start, so playback skips the slow
 // build-up to land the peak on the burst.
 const DASH_START_SECONDS = 0.4;
 const DASH_PEAK_SECONDS = 0.65;
-const DASH_IN_VOLUME = 0.25;
+const DASH_IN_VOLUME = 0.0875;
 // Why: the dash back covers most of its distance early, so the reversed whoosh peaks a little under halfway through, as the screen fills the view.
 const DASH_IN_LANDING = 0.45;
 // Starts muffled and opens up on arrival, in step with the distance effect clearing from other apps' sound.
 const DASH_IN_FAR_HERTZ = 600;
 const DASH_IN_NEAR_HERTZ = 9000;
+// Why: the recording peaks at full scale and played unscaled, about 11 dB louder than the room and the dash; 0.2 sits it just under them, since a click's sharp attack reads louder than its measured level.
+const LIGHTER_VOLUME = 0.2;
 // Burning tobacco keeps ticking briefly after the draw stops.
 const CRACKLE_TAIL_SECONDS = 0.45;
 const CRACKLES_PER_SECOND = 45;
@@ -32,10 +36,14 @@ ambience.loop = true;
 const audioContext = new AudioContext();
 const airNoise = createNoiseBuffer(audioContext);
 const crackleNoise = createCrackleBuffer(audioContext);
+// Everything played through the context goes through this, so the Volume setting scales it all at once.
+const masterVolume = audioContext.createGain();
+masterVolume.connect(audioContext.destination);
 const ambienceLevel = routeAmbience();
 // Why: the page waits hidden between breaks, and a running context would hold the audio device awake the whole time.
 audioContext.suspend();
 let soundEnabled = true;
+let soundVolume = 1;
 let lighterBuffer = null;
 let dashInBuffer = null;
 let inhaleOutput = null;
@@ -80,7 +88,7 @@ function routeAmbience() {
     previous = rumbleCut;
   }
   previous.connect(level);
-  level.connect(audioContext.destination);
+  level.connect(masterVolume);
   return level;
 }
 
@@ -128,12 +136,12 @@ function sweptBand(target, source, fromHertz, toHertz, quality, startTime, endTi
 
 // Why: synthesised rather than a recording so every drag follows its own strength and length, and no two sound identical.
 // Air is drawn through one low band with its top rolled off, because any upper band reads as hiss, with faint tobacco crackle on top.
-function buildInhale(target, strength, durationSeconds) {
+function buildInhale(target, destination, strength, durationSeconds) {
   const startTime = target.currentTime;
   const endTime = startTime + durationSeconds;
   const output = target.createGain();
   output.gain.value = INHALE_VOLUME * (0.5 + 0.5 * strength);
-  output.connect(target.destination);
+  output.connect(destination);
 
   const air = startNoise(target, airNoise, endTime + 0.1);
   const airLevel = target.createGain();
@@ -172,6 +180,11 @@ function setSoundEnabled(enabled) {
   soundEnabled = enabled;
 }
 
+function setSoundVolume(percent) {
+  soundVolume = percent / 100 * MAXIMUM_VOLUME;
+  masterVolume.gain.value = soundVolume;
+}
+
 function startAmbience() {
   if (!soundEnabled) return;
   ambience.play();
@@ -188,7 +201,7 @@ function fadeOutAmbience(durationMs) {
 }
 
 // Starts part way into the reversed whoosh so its peak lands at the right moment of a dash of any length.
-function buildDashIn(target, durationMs) {
+function buildDashIn(target, destination, durationMs) {
   const landingSeconds = (durationMs / 1000) * DASH_IN_LANDING;
   const startTime = target.currentTime;
   const source = target.createBufferSource();
@@ -201,17 +214,17 @@ function buildDashIn(target, durationMs) {
   level.gain.value = DASH_IN_VOLUME;
   source.connect(opening);
   opening.connect(level);
-  level.connect(target.destination);
+  level.connect(destination);
   source.start(startTime, dashInBuffer.duration - DASH_PEAK_SECONDS - landingSeconds);
 }
 
 function playDashIn(durationMs) {
-  if (soundEnabled) buildDashIn(audioContext, durationMs);
+  if (soundEnabled) buildDashIn(audioContext, masterVolume, durationMs);
 }
 
 function playDashOut() {
   if (!soundEnabled) return;
-  dash.volume = DASH_VOLUME;
+  dash.volume = DASH_VOLUME * soundVolume;
   dash.currentTime = DASH_START_SECONDS;
   dash.play();
 }
@@ -220,12 +233,15 @@ function playLighter() {
   if (!soundEnabled) return;
   const source = audioContext.createBufferSource();
   source.buffer = lighterBuffer;
-  source.connect(audioContext.destination);
+  const level = audioContext.createGain();
+  level.gain.value = LIGHTER_VOLUME;
+  source.connect(level);
+  level.connect(masterVolume);
   source.start();
 }
 
 function playInhale(strength, durationSeconds) {
-  if (soundEnabled) inhaleOutput = buildInhale(audioContext, strength, durationSeconds);
+  if (soundEnabled) inhaleOutput = buildInhale(audioContext, masterVolume, strength, durationSeconds);
 }
 
 // Cuts a drag short when the cigarette is taken away mid-inhale.

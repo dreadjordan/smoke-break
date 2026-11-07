@@ -186,10 +186,11 @@ function endBreakEarly() {
   returnToDesktop();
 }
 
-function applySettings({ breakSeconds, fillBackground, sound }) {
+function applySettings({ breakSeconds, fillBackground, sound, volume }) {
   setBreakLength(breakSeconds);
   setBackgroundEnabled(fillBackground);
   setSoundEnabled(sound);
+  setSoundVolume(volume);
 }
 
 async function runBreak() {
