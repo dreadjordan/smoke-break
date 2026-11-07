@@ -33,7 +33,7 @@
       "main.js",
       "desktop-stream.js",
       "snapshot-stream.js",
-      "hotkey-window.js",
+      "update-check.js",
       "assets/**",
       "src/**"
     ],

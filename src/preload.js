@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('smokeBreak', {
   requestDesktopStill: () => ipcRenderer.send('request-desktop-still'),
   setAudioDistance: (distance) => ipcRenderer.send('audio-distance', distance),
   showWindow: () => ipcRenderer.send('show-window'),
+  pageAlive: () => ipcRenderer.send('page-alive'),
   finish: () => ipcRenderer.send('finish'),
   onEscape: (callback) => ipcRenderer.on('escape', () => callback()),
 });

@@ -13,6 +13,9 @@ let farStereoWidth: Float = 0.35
 let farRoomLevel: Float = 0.35
 // Why: the audio device wakes just after the dash begins, so this eases the effect in as a sweep instead of a sudden step.
 let distanceSmoothingSeconds: Float = 0.06
+// Why: this path runs a few buffers behind the live sound, so switching straight back skips ahead and is heard as a cut. Long enough to
+// cover that gap, and short enough that the two copies don't read as an echo.
+let handoverSeconds: Float = 0.08
 let roomFeedback: Float = 0.72
 // Why: mutually unrelated delays stop the echoes reinforcing into a metallic ring.
 let roomDelaySeconds: [Double] = [0.0297, 0.0371, 0.0411, 0.0437]
@@ -27,11 +30,15 @@ final class RoomProcessor {
   private let filterState: UnsafeMutablePointer<Float>
   private var distance: Float = 0
   private let targetDistance: UnsafePointer<Float>
+  private let handoverStep: Float
+  private var handoverProgress: Float = 0
+  var isHandingOver = false
 
   init(sampleRate: Double, targetDistance: UnsafePointer<Float>) {
     self.sampleRate = Float(sampleRate)
     self.targetDistance = targetDistance
     distanceStep = 1 - exp(-1 / (distanceSmoothingSeconds * Float(sampleRate)))
+    handoverStep = 1 / (handoverSeconds * Float(sampleRate))
     delayLengths = roomDelaySeconds.map { Int($0 * sampleRate) }
     delayLines = delayLengths.map { length in
       let line = UnsafeMutablePointer<Float>.allocate(capacity: length)
@@ -74,8 +81,13 @@ final class RoomProcessor {
         roomRight += line < 2 ? echo : -echo
       }
 
-      let gain = 1 + (farGain - 1) * distance
-      let roomLevel = farRoomLevel * distance / Float(delayLines.count)
+      var handoverLevel: Float = 1
+      if isHandingOver {
+        handoverProgress = min(1, handoverProgress + handoverStep)
+        handoverLevel = 0.5 + 0.5 * cos(Float.pi * handoverProgress)
+      }
+      let gain = (1 + (farGain - 1) * distance) * handoverLevel
+      let roomLevel = farRoomLevel * distance / Float(delayLines.count) * handoverLevel
       output[frame * outputChannels] = filteredLeft * gain + roomLeft * roomLevel
       if outputChannels > 1 { output[frame * outputChannels + 1] = filteredRight * gain + roomRight * roomLevel }
       if outputChannels > 2 { for channel in 2..<outputChannels { output[frame * outputChannels + channel] = 0 } }
@@ -93,10 +105,11 @@ final class DistantAudio {
   private var aggregate = AudioObjectID(kAudioObjectUnknown)
   private var ioProc: AudioDeviceIOProcID?
   private let room: RoomProcessor
+  private let description: CATapDescription
 
   // Why: our own sounds must stay close, and this helper's playback must be left out too or the tap would feed back into itself.
   init(excludedProcesses: [pid_t], targetDistance: UnsafePointer<Float>) throws {
-    let description = CATapDescription(stereoGlobalTapButExcludeProcesses: excludedProcesses.compactMap(audioObject))
+    description = CATapDescription(stereoGlobalTapButExcludeProcesses: excludedProcesses.compactMap(audioObject))
     description.name = "Smoke Break distance"
     description.isPrivate = true
     description.muteBehavior = .mutedWhenTapped
@@ -132,11 +145,23 @@ final class DistantAudio {
     try check("start audio", AudioDeviceStart(aggregate, ioProc))
   }
 
-  func stop() {
+  // Crossfades back to the live sound rather than cutting to it: the tap is unmuted while this path is still playing, which then fades out.
+  func stop() async {
+    if unmuteTap() {
+      room.isHandingOver = true
+      try? await Task.sleep(for: .seconds(Double(handoverSeconds) + 0.02))
+    }
     AudioDeviceStop(aggregate, ioProc)
     if let ioProc { AudioDeviceDestroyIOProcID(aggregate, ioProc) }
     AudioHardwareDestroyAggregateDevice(aggregate)
     AudioHardwareDestroyProcessTap(tap)
+  }
+
+  private func unmuteTap() -> Bool {
+    description.muteBehavior = .unmuted
+    var propertyAddress = address(kAudioTapPropertyDescription)
+    var reference = Unmanaged.passUnretained(description).toOpaque()
+    return AudioObjectSetPropertyData(tap, &propertyAddress, 0, nil, UInt32(MemoryLayout.size(ofValue: reference)), &reference) == noErr
   }
 }
 

@@ -12,6 +12,7 @@ const BREAK_DISTANCE_FEET = 15;
 // Why: the break opens and closes with an anime-style dash (a burst that settles, with speed lines) rather than a walk,
 // so the viewer is in place, or back at the desk, almost at once.
 const DASH_MS = 800;
+const PAGE_HEARTBEAT_MS = 500;
 const SPEED_LINE_COUNT = 110;
 // The desktop recedes toward eye level, a little above centre, leaving the lower view to the hand and cigarette.
 const EYE_LEVEL = { x: 0.5, y: 0.42 };
@@ -186,14 +187,16 @@ function endBreakEarly() {
   returnToDesktop();
 }
 
-function applySettings({ breakSeconds, fillBackground, sound, volume }) {
+function applySettings({ breakSeconds, backgroundFill, ambientNoise, volume }) {
   setBreakLength(breakSeconds);
-  setBackgroundEnabled(fillBackground);
-  setSoundEnabled(sound);
+  setBackground(backgroundFill);
+  setAmbienceEnabled(ambientNoise);
   setSoundVolume(volume);
 }
 
 async function runBreak() {
+  // Why: the main process closes a break that stops hearing this, because a frozen page can't end its own break.
+  setInterval(window.smokeBreak.pageAlive, PAGE_HEARTBEAT_MS);
   resumeAudio();
   await desktopSnapshotReady;
   startBackground();
@@ -214,11 +217,13 @@ async function runBreak() {
 }
 
 window.addEventListener('resize', resizeScene);
-// Why: keys still held from the hotkey that started the break repeat into this window, and must not end it straight away.
+// Why: a key already held as an automatic break starts repeats into this window, and must not end it straight away.
 window.addEventListener('keydown', (event) => {
   if (!event.repeat) endBreakEarly();
 });
 window.smokeBreak.onEscape(endBreakEarly);
-window.smokeBreak.onBeginBreak(runBreak);
+window.smokeBreak.onBeginBreak(() => runBreak().catch(window.smokeBreak.finish));
+// Why: an error in the drawing loop stops the dash too, and the break could never end by itself. Rejected play() calls are routine, so they don't count.
+window.addEventListener('error', window.smokeBreak.finish);
 applySettings(window.smokeBreak.settings());
 window.smokeBreak.onSettingsChanged(applySettings);

@@ -1,5 +1,5 @@
 // Smoke Break's resident capture helper: for each break it sends a snapshot of the display, a small ScreenCaptureKit feed with Smoke Break's window left out, and runs distant-audio.swift.
-// Frames go to stdout as a 16-byte header (kind, width, height, byte count) then the data; stdin takes "begin <display> <process ids> <sound|silent> <live|still>", "distance <0-1>", "still" and "end".
+// Frames go to stdout as a 16-byte header (kind, width, height, byte count) then the data; stdin takes "begin <display> <process ids> <sound|silent> <live|still>", "distance <0-1>", "still", "alive" and "end".
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -95,6 +95,12 @@ final class FrameWriter: NSObject, SCStreamOutput, SCStreamDelegate {
   }
 }
 
+// Kept here so they live as long as the process.
+var appExitWatch: DispatchSourceProcess?
+var frozenAppWatch: DispatchSourceTimer?
+// Why: the break window covers even the Force Quit window, so a frozen app would leave the Mac unusable; this process is the only thing still able to act.
+let frozenAppLimitNanoseconds: UInt64 = 8_000_000_000
+
 func fail(_ error: Error) -> Never {
   FileHandle.standardError.write(Data("desktop-stream: \(error)\n".utf8))
   exit(1)
@@ -167,6 +173,24 @@ struct DesktopStream {
       FileHandle.standardError.write(Data("usage: desktop-stream <app process id>\n".utf8))
       exit(2)
     }
+    // Why: a helper stuck in ScreenCaptureKit never reaches the stdin loop's end, and one outliving the app keeps its tap, which silences
+    // the whole Mac's sound, the next launch of Smoke Break included. Watching the app works however stuck this process is.
+    appExitWatch = DispatchSource.makeProcessSource(identifier: appProcess, eventMask: .exit, queue: .global())
+    appExitWatch?.setEventHandler { exit(0) }
+    appExitWatch?.resume()
+    if kill(appProcess, 0) != 0 { exit(0) }
+
+    // When the app last wrote to stdin during a break; 0 between breaks, when it has no reason to.
+    let lastCommand = UnsafeMutablePointer<UInt64>.allocate(capacity: 1)
+    lastCommand.pointee = 0
+    frozenAppWatch = DispatchSource.makeTimerSource(queue: .global())
+    frozenAppWatch?.schedule(deadline: .now() + 1, repeating: 1)
+    frozenAppWatch?.setEventHandler {
+      let last = lastCommand.pointee
+      if last != 0, DispatchTime.now().uptimeNanoseconds - last > frozenAppLimitNanoseconds { kill(appProcess, SIGKILL) }
+    }
+    frozenAppWatch?.resume()
+
     let writer = FrameWriter()
     let helperProcess = getpid()
     let distance = UnsafeMutablePointer<Float>.allocate(capacity: 1)
@@ -180,8 +204,9 @@ struct DesktopStream {
     var audio: Task<DistantAudio?, Never>?
 
     func endBreak() async {
-      try? await capture?.value.stream?.stopCapture()
+      // Why: audio goes first because stopping the capture can hang, and the Mac stays muted for as long as the tap is held.
       await audio?.value?.stop()
+      try? await capture?.value.stream?.stopCapture()
       capture = nil
       audio = nil
       distance.pointee = 0
@@ -190,9 +215,11 @@ struct DesktopStream {
     // Why: stdin closing means the app has gone, however it went; the helper must never outlive it and keep capturing or muting.
     while let line = readLine() {
       let parts = line.split(separator: " ")
+      if lastCommand.pointee != 0 { lastCommand.pointee = DispatchTime.now().uptimeNanoseconds }
       switch parts.first {
       case "begin":
         guard parts.count == 5, let displayId = UInt32(parts[1]) else { continue }
+        lastCommand.pointee = DispatchTime.now().uptimeNanoseconds
         let live = parts[4] == "live"
         let processes = parts[2].split(separator: ",").compactMap { Int32($0) }
         let knownContent = content
@@ -219,6 +246,7 @@ struct DesktopStream {
           }
         }
       case "end":
+        lastCommand.pointee = 0
         await endBreak()
         content = Task.detached { try await shareableContent() }
       default:

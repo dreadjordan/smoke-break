@@ -2,11 +2,11 @@ sometimes you just need a break
 
 ## features
 
-live-action cigarette. desktop looks and sounds far away while you're on break. can be set on automatic timer.
+live-action cigarette (recorded by me). royalty free sound effects.
 
-press any key during a break to end it early. right-click the icon for settings.
+desktop looks and sounds far away while you're on break. optional automatic timer.
 
-tested on macOS (version 27).
+end breaks early by pressing any key. right-click the icon for settings.
 
 ## installation
 
@@ -20,8 +20,9 @@ it isn't notorized, so expect permission pop-ups.
 
 ## additional notes
 
-expect bugs. if you encounter them, feel free to submit an issue
+this was tested on macOS (version 27).
+expect bugs. if you encounter any, feel free to submit an issue
 
-## License
+## license
 
 the code is under the [MIT License](LICENSE). 

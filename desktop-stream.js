@@ -65,6 +65,8 @@ function createDesktopStream(onFrame, onExit) {
     setAudioDistance: (distance) => send(`distance ${distance.toFixed(3)}`),
     requestStill: () => send('still'),
     end: () => send('end'),
+    restart: () => helper?.kill('SIGKILL'),
+    keepAlive: () => send('alive'),
   };
 }
 

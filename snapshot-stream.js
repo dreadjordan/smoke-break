@@ -21,6 +21,8 @@ function createDesktopStream(onFrame) {
     setAudioDistance: () => {},
     requestStill: () => {},
     end: () => {},
+    restart: () => {},
+    keepAlive: () => {},
   };
 }
 

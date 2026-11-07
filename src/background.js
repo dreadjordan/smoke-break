@@ -1,8 +1,9 @@
-// The optional background: a looping landscape video that fills the view in place of the dark room and distant screen.
-// Two copies of the clip crossfade at the loop point, because its camera moves and the end doesn't match the start.
+// The optional background: a looping video, chosen in Settings, that fills the view in place of the dark room and distant screen.
+// Two copies of the clip crossfade at the loop point, because the camera moves and the end doesn't match the start.
 'use strict';
 
-const BACKGROUND_SOURCE = 'assets/landscape.mp4';
+// The fills that are dark scenes, for smoker.js to shade the hand to match.
+const NIGHT_FILLS = [2];
 const BACKGROUND_BLEND_MS = 500;
 const BACKGROUND_SEAM_SECONDS = 1;
 const MAX_BACKGROUND_STEP_MS = 50;
@@ -10,22 +11,27 @@ const MAX_BACKGROUND_STEP_MS = 50;
 const backgroundClips = [document.createElement('video'), document.createElement('video')];
 let backgroundEnabled = false;
 let backgroundRunning = false;
-// How much the background shows (0 the dark room, 1 the full landscape); smoker.js lifts the room shade by this too.
+let backgroundSource = null;
+let backgroundIsNight = false;
+// How much the background shows (0 the dark room, 1 the full video); smoker.js lifts the room shade by this too.
 let backgroundBlend = 0;
 let frontClip = 0;
 let seamBlend = 0;
 let lastBackgroundTime = 0;
 
-// Why: left unloaded while the setting is off, so a hidden page waiting for a break doesn't hold a large video in memory.
-// Loaded as soon as it is turned on, so it is ready before the next break begins.
-function loadBackgroundClips() {
-  for (const clip of backgroundClips) {
-    if (clip.src) continue;
-    clip.src = BACKGROUND_SOURCE;
-    clip.muted = true;
-    clip.preload = 'auto';
-    redrawOnBackgroundFrames(clip);
-  }
+for (const clip of backgroundClips) {
+  clip.muted = true;
+  clip.preload = 'auto';
+  redrawOnBackgroundFrames(clip);
+}
+
+// Why: only the chosen clip is loaded, and nothing while the setting is off, so a hidden page waiting for a break doesn't hold a large video in memory.
+// Loaded as soon as it is chosen, so it is ready before the next break begins.
+function loadBackgroundClips(fill) {
+  const source = `assets/background_fill_${fill}.mp4`;
+  if (source === backgroundSource) return;
+  backgroundSource = source;
+  for (const clip of backgroundClips) clip.src = source;
 }
 
 function redrawOnBackgroundFrames(clip) {
@@ -43,9 +49,11 @@ function startBackground() {
   if (backgroundClips[frontClip].readyState >= 2) backgroundBlend = 1;
 }
 
-function setBackgroundEnabled(enabled) {
-  backgroundEnabled = enabled;
-  if (enabled) loadBackgroundClips();
+// Fill 0 is no background.
+function setBackground(fill) {
+  backgroundEnabled = fill > 0;
+  backgroundIsNight = NIGHT_FILLS.includes(fill);
+  if (backgroundEnabled) loadBackgroundClips(fill);
 }
 
 function advanceBackgroundSeam() {

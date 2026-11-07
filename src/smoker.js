@@ -17,6 +17,10 @@ const STAGE_HEIGHT = 360;
 const ROOM_SHADE_DARK = 0.58;
 // Why: in the daylight of the background, the dark room's shade would turn the hand into a silhouette pasted over a bright scene.
 const ROOM_SHADE_DAYLIGHT = 0.12;
+// Why: against a night scene a daylight-lit hand glows like a cut-out; this takes it down and cools it towards moonlight without losing it in the dark.
+const ROOM_SHADE_NIGHT = 0.4;
+const ROOM_SHADE_COLOUR = '9, 11, 19';
+const NIGHT_SHADE_COLOUR = '10, 22, 54';
 const DRAG_BURN_MULTIPLIER = 2.5;
 // Why: drags take about 1.4s of every 10s and burn faster, so the average rate runs above the base rate by this much; the base rate
 // is set from it so the cigarette lasts the chosen break length.
@@ -175,7 +179,9 @@ function render(time) {
   context.save();
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.globalCompositeOperation = 'source-atop';
-  context.fillStyle = `rgba(9, 11, 19, ${ROOM_SHADE_DARK + (ROOM_SHADE_DAYLIGHT - ROOM_SHADE_DARK) * backgroundBlend})`;
+  const backgroundShade = backgroundIsNight ? ROOM_SHADE_NIGHT : ROOM_SHADE_DAYLIGHT;
+  const shade = ROOM_SHADE_DARK + (backgroundShade - ROOM_SHADE_DARK) * backgroundBlend;
+  context.fillStyle = `rgba(${backgroundIsNight ? NIGHT_SHADE_COLOUR : ROOM_SHADE_COLOUR}, ${shade})`;
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.restore();
   const view = stage();
