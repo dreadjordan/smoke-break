@@ -1,5 +1,6 @@
 // Smoke Break's resident capture helper: for each break it sends a snapshot of the display, a small ScreenCaptureKit feed with Smoke Break's window left out, and runs distant-audio.swift.
-// Frames go to stdout as a 16-byte header (kind, width, height, byte count) then the data; stdin takes "begin <display> <process ids> <sound|silent> <live|still>", "distance <0-1>", "still", "alive" and "end".
+// Frames go to stdout as a 16-byte header (kind, width, height, byte count) then the data; stdin takes "begin <display> <process ids> <sound|silent> <live|still>", "distance <0-1>", "still", "alive", "end", "request-access" and "request-audio-access".
+import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -126,6 +127,14 @@ func shareableContent() async throws -> SCShareableContent {
   try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 }
 
+// Why: fetching without permission makes macOS show its prompt at launch, on top of the app's own explanation. A break fetches again when this fails.
+func prefetchContent() -> Task<SCShareableContent, Error> {
+  Task.detached {
+    guard CGPreflightScreenCaptureAccess() else { throw CancellationError() }
+    return try await shareableContent()
+  }
+}
+
 func startCapture(content: SCShareableContent, displayId: UInt32, appProcess: Int32, live: Bool, writer: FrameWriter) async throws -> DesktopCapture {
   guard let display = content.displays.first(where: { $0.displayID == displayId }) else {
     FileHandle.standardError.write(Data("desktop-stream: display \(displayId) not found\n".utf8))
@@ -198,7 +207,7 @@ struct DesktopStream {
     let sharedDistance = UnsafePointer(distance)
 
     // Why: the display and app list is slow to fetch, so it is ready before the click rather than after it.
-    var content = Task.detached { try await shareableContent() }
+    var content = prefetchContent()
     var capture: Task<DesktopCapture, Error>?
     // Why: built per break, never left idle between them: a tap that outlived a break could leave the Mac's sound muted.
     var audio: Task<DistantAudio?, Never>?
@@ -231,6 +240,13 @@ struct DesktopStream {
           let current = if let known { known } else { try await shareableContent() }
           return try await startCapture(content: current, displayId: displayId, appProcess: appProcess, live: live, writer: writer)
         }
+      case "request-access":
+        // Why: detached because it waits on macOS, and this loop must keep reading. A capture attempt alone never lists the app in System Settings.
+        Task.detached { _ = CGRequestScreenCaptureAccess() }
+      case "request-audio-access":
+        Task.detached {
+          do { try await requestSystemAudioAccess() } catch { FileHandle.standardError.write(Data("desktop-stream: audio access request failed: \(error)\n".utf8)) }
+        }
       case "distance":
         if parts.count == 2, let value = Float(parts[1]) { distance.pointee = min(1, max(0, value)) }
       case "still":
@@ -248,7 +264,7 @@ struct DesktopStream {
       case "end":
         lastCommand.pointee = 0
         await endBreak()
-        content = Task.detached { try await shareableContent() }
+        content = prefetchContent()
       default:
         continue
       }

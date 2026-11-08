@@ -23,6 +23,8 @@ function createDesktopStream(onFrame) {
     end: () => {},
     restart: () => {},
     keepAlive: () => {},
+    requestScreenAccess: () => {},
+    requestAudioAccess: () => {},
   };
 }
 

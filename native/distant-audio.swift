@@ -115,19 +115,7 @@ final class DistantAudio {
     description.muteBehavior = .mutedWhenTapped
     try check("create tap", AudioHardwareCreateProcessTap(description, &tap))
 
-    let outputDevice = try systemObjectProperty(kAudioHardwarePropertyDefaultOutputDevice, as: AudioObjectID.self)
-    let outputUID = try deviceUID(outputDevice)
-    let settings: [String: Any] = [
-      kAudioAggregateDeviceNameKey: "Smoke Break distance",
-      kAudioAggregateDeviceUIDKey: UUID().uuidString,
-      kAudioAggregateDeviceMainSubDeviceKey: outputUID,
-      kAudioAggregateDeviceIsPrivateKey: true,
-      kAudioAggregateDeviceIsStackedKey: false,
-      kAudioAggregateDeviceTapAutoStartKey: true,
-      kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outputUID]],
-      kAudioAggregateDeviceTapListKey: [[kAudioSubTapDriftCompensationKey: true, kAudioSubTapUIDKey: description.uuid.uuidString]],
-    ]
-    try check("create aggregate device", AudioHardwareCreateAggregateDevice(settings as CFDictionary, &aggregate))
+    try check("create aggregate device", AudioHardwareCreateAggregateDevice(try aggregateSettings(tap: description) as CFDictionary, &aggregate))
 
     room = RoomProcessor(sampleRate: try deviceSampleRate(aggregate), targetDistance: targetDistance)
     let processor = room
@@ -163,6 +151,42 @@ final class DistantAudio {
     var reference = Unmanaged.passUnretained(description).toOpaque()
     return AudioObjectSetPropertyData(tap, &propertyAddress, 0, nil, UInt32(MemoryLayout.size(ofValue: reference)), &reference) == noErr
   }
+}
+
+// Why: macOS has no call that asks for system audio access; it asks when a tap first starts. Doing that during setup keeps the prompt out of the first break.
+// The tap is unmuted and nothing is played from it, so other apps sound the same throughout. The prompt belongs to the system, so it outlives this short tap.
+func requestSystemAudioAccess() async throws {
+  let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+  description.name = "Smoke Break permission"
+  description.isPrivate = true
+  description.muteBehavior = .unmuted
+  var tap = AudioObjectID(kAudioObjectUnknown)
+  try check("create tap", AudioHardwareCreateProcessTap(description, &tap))
+  defer { AudioHardwareDestroyProcessTap(tap) }
+  var aggregate = AudioObjectID(kAudioObjectUnknown)
+  try check("create aggregate device", AudioHardwareCreateAggregateDevice(try aggregateSettings(tap: description) as CFDictionary, &aggregate))
+  defer { AudioHardwareDestroyAggregateDevice(aggregate) }
+  var ioProc: AudioDeviceIOProcID?
+  try check("create audio callback", AudioDeviceCreateIOProcIDWithBlock(&ioProc, aggregate, nil) { _, _, _, _, _ in })
+  defer { if let ioProc { AudioDeviceDestroyIOProcID(aggregate, ioProc) } }
+  try check("start audio", AudioDeviceStart(aggregate, ioProc))
+  try? await Task.sleep(for: .seconds(2))
+  AudioDeviceStop(aggregate, ioProc)
+}
+
+private func aggregateSettings(tap description: CATapDescription) throws -> [String: Any] {
+  let outputDevice = try systemObjectProperty(kAudioHardwarePropertyDefaultOutputDevice, as: AudioObjectID.self)
+  let outputUID = try deviceUID(outputDevice)
+  return [
+    kAudioAggregateDeviceNameKey: "Smoke Break distance",
+    kAudioAggregateDeviceUIDKey: UUID().uuidString,
+    kAudioAggregateDeviceMainSubDeviceKey: outputUID,
+    kAudioAggregateDeviceIsPrivateKey: true,
+    kAudioAggregateDeviceIsStackedKey: false,
+    kAudioAggregateDeviceTapAutoStartKey: true,
+    kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outputUID]],
+    kAudioAggregateDeviceTapListKey: [[kAudioSubTapDriftCompensationKey: true, kAudioSubTapUIDKey: description.uuid.uuidString]],
+  ]
 }
 
 private func check(_ step: String, _ status: OSStatus) throws {

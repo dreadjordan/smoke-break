@@ -67,6 +67,14 @@ function createDesktopStream(onFrame, onExit) {
     end: () => send('end'),
     restart: () => helper?.kill('SIGKILL'),
     keepAlive: () => send('alive'),
+    requestScreenAccess: () => {
+      if (!helper) launch();
+      send('request-access');
+    },
+    requestAudioAccess: () => {
+      if (!helper) launch();
+      send('request-audio-access');
+    },
   };
 }
 

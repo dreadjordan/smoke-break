@@ -6,7 +6,7 @@ live-action cigarette (recorded by me). royalty free sound effects.
 
 desktop looks and sounds far away while you're on break. optional automatic timer.
 
-end breaks early by pressing any key. right-click the icon for settings.
+a break starts as soon as you open the app. end breaks early by pressing any key. right-click the icon for stats and settings.
 
 ## installation
 

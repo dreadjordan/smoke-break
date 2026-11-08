@@ -10,7 +10,8 @@
     "prestart": "npm run --silent build:helper",
     "start": "electron .",
     "dist:mac": "npm run --silent build:helper && electron-builder --mac --arm64",
-    "dist:win": "electron-builder --win --x64"
+    "dist:win": "electron-builder --win --x64",
+    "dist:steam": "npm run --silent build:helper && electron-builder --mac dir --arm64 --config.extraMetadata.steamBuild=true --config.directories.output=dist/steam"
   },
   "devDependencies": {
     "electron": "^45.2.1",
@@ -34,6 +35,7 @@
       "desktop-stream.js",
       "snapshot-stream.js",
       "update-check.js",
+      "break-ledger.js",
       "assets/**",
       "src/**"
     ],

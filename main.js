@@ -1,10 +1,14 @@
 // Smoke Break's Electron main process: a menu bar icon that starts a break when pressed, or on a timer, with its settings on right click.
-// Each break covers the display under the cursor with a window prepared in advance, which starts as a copy of the desktop and is fed the live desktop.
-const { app, BrowserWindow, Menu, Tray, desktopCapturer, dialog, globalShortcut, ipcMain, powerMonitor, screen, shell, systemPreferences } = require('electron');
+// Each break covers the display under the cursor with a window prepared in advance, which starts as a copy of the desktop and is fed the live desktop. The first break starts at launch, and each one is recorded in the break ledger.
+const { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, powerMonitor, screen, systemPreferences } = require('electron');
+const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createDesktopStream } = require(process.platform === 'darwin' ? './desktop-stream' : './snapshot-stream');
 const { findNewerVersion, offerUpdate } = require('./update-check');
+const { openBreakLedger, breakTimeTotals } = require('./break-ledger');
+// Set only by `npm run dist:steam`. Why: Steam delivers updates itself, so the GitHub check would offer a second, conflicting way to update.
+const { steamBuild } = require('./package.json');
 
 // Why: however exact the snapshot, the real screen can differ (colour handling, a clock that ticked), so revealing or
 // covering it in one frame flashes; fading the whole window over a few frames turns any difference into a soft blend.
@@ -69,11 +73,12 @@ const UPDATE_CHECK_DELAY_MS = 15 * 1000;
 // Why: a menu bar app can stay open for weeks, so checking only at launch would miss most releases.
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_RETRY_MS = 60 * 1000;
-const DEFAULT_SETTINGS = { breakSeconds: 30, automaticMinutes: 0, backgroundFill: 0, ambientNoise: true, volume: 100, checkForUpdates: true, skippedVersion: null };
+const DEFAULT_SETTINGS = { breakSeconds: 30, automaticMinutes: 0, backgroundFill: 0, ambientNoise: true, volume: 100, checkForUpdates: true, skippedVersion: null, audioAccessRequested: false };
 
 let settings = null;
 let automaticBreakTimer = null;
 let updateOfferOpen = false;
+let stalePermissionsCleared = false;
 let breakRunning = false;
 let breakVisible = false;
 let quitting = false;
@@ -82,6 +87,9 @@ let screenPermissionGranted = false;
 let preparedBreak = null;
 let breakWatch = null;
 let lastPageHeartbeat = 0;
+let breakLedger = null;
+let creditedBreakMs = 0;
+let lastCreditTime = 0;
 let tray = null;
 let menu = null;
 
@@ -118,8 +126,25 @@ function changeSetting(key, value) {
   scheduleAutomaticBreak();
 }
 
+// Why: only time the page proves it was alive counts, on a clock that ignores system clock changes. Each gap is capped so a laptop asleep mid-break earns nothing.
+function creditBreakTime() {
+  const now = performance.now();
+  creditedBreakMs += Math.min(now - lastCreditTime, PAGE_SILENCE_LIMIT_MS);
+  lastCreditTime = now;
+}
+
+// Why: this runs while a break closes, and a failed write must not stop the next break being prepared.
+function recordBreak() {
+  try {
+    breakLedger.append({ endedAt: Date.now(), durationMs: Math.round(creditedBreakMs), plannedSeconds: settings.breakSeconds });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 ipcMain.on('page-alive', () => {
   lastPageHeartbeat = Date.now();
+  if (breakVisible) creditBreakTime();
 });
 
 ipcMain.on('get-settings', (event) => {
@@ -132,7 +157,6 @@ function announceBreak(state) {
   if (process.platform === 'darwin') systemPreferences.postNotification(`com.dreadjordan.smokebreak.${state}`, {}, true);
 }
 
-// Why: without this permission the capture comes back empty and the break could never appear, so send the user to grant it instead.
 // Keeps the helper's own watchdog fed, and ends a break whose page has gone quiet or has run far past its length.
 function watchBreak() {
   const deadline = Date.now() + settings.breakSeconds * 1000 + BREAK_OVERRUN_LIMIT_MS;
@@ -152,12 +176,41 @@ function leaveBreak() {
   }, LEAVE_LIMIT_MS);
 }
 
+// Why: a grant belongs to the signature that received it, yet System Settings keeps showing it as on after the app's signature changes, as an
+// ad-hoc signed update does. The switch then looks right and does nothing, so clear it first. Only runs with access already missing, so no working grant is lost.
+function clearStalePermissions() {
+  const services = ['ScreenCapture', 'AudioCapture'];
+  return Promise.all(services.map((service) => new Promise((resolve) => {
+    execFile('/usr/bin/tccutil', ['reset', service, 'com.dreadjordan.smokebreak'], () => resolve());
+  })));
+}
+
+async function requestScreenPermission() {
+  // Why: once per launch, because a press while the user is in System Settings would otherwise wipe the entry they are about to turn on.
+  if (!stalePermissionsCleared) {
+    stalePermissionsCleared = true;
+    await clearStalePermissions();
+    changeSetting('audioAccessRequested', false);
+  }
+  // Why: asked of the helper because desktopCapturer.getSources never returned once the old entry was cleared. Clearing it also means macOS always
+  // shows its own prompt, whose button opens System Settings.
+  desktopStream.requestScreenAccess();
+}
+
+// Why: macOS only asks for system audio when a tap starts, which would otherwise be in the middle of the first break, so it is asked for up front.
+function requestSoundPermission() {
+  changeSetting('audioAccessRequested', true);
+  desktopStream.requestAudioAccess();
+}
+
+const soundPermissionPending = () => process.platform === 'darwin' && !settings.audioAccessRequested;
+
+// Why: without this permission the capture comes back empty and the break could never appear, so send the user to grant it instead.
 async function hasScreenPermission() {
   if (screenPermissionGranted) return true;
   screenPermissionGranted = systemPreferences.getMediaAccessStatus('screen') === 'granted';
   if (screenPermissionGranted) return true;
-  await desktopCapturer.getSources({ types: ['screen'] });
-  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  await requestScreenPermission();
   return false;
 }
 
@@ -198,6 +251,7 @@ function prepareBreak() {
     ipcMain.removeAllListeners('finish');
     globalShortcut.unregister('Escape');
     clearInterval(breakWatch);
+    if (breakVisible) recordBreak();
     breakVisible = false;
     desktopStream.end();
     breakRunning = false;
@@ -221,6 +275,10 @@ function prepareBreak() {
 
 async function startBreak() {
   if (breakRunning || !(await hasScreenPermission())) return;
+  if (soundPermissionPending()) {
+    requestSoundPermission();
+    return;
+  }
   breakRunning = true;
   announceBreak('began');
   const { window, pageLoaded } = preparedBreak;
@@ -244,12 +302,15 @@ async function startBreak() {
     window.show();
     window.focus();
     lastPageHeartbeat = Date.now();
+    creditedBreakMs = 0;
+    lastCreditTime = performance.now();
     breakVisible = true;
     fadeWindow(window, 0, BREAK_OPACITY, FADE_IN_MS);
     // Why: if keyboard focus ends up elsewhere, a global shortcut still lets Escape end the break.
     globalShortcut.register('Escape', leaveBreak);
   });
   ipcMain.once('finish', async () => {
+    if (breakVisible) creditBreakTime();
     ipcMain.removeAllListeners('audio-distance');
     desktopStream.end();
     await fadeWindow(window, BREAK_OPACITY, 0, FADE_OUT_MS);
@@ -264,9 +325,9 @@ function scheduleAutomaticBreak() {
   if (settings.automaticMinutes > 0) automaticBreakTimer = setTimeout(takeAutomaticBreak, settings.automaticMinutes * 60 * 1000);
 }
 
-// Why: skipped rather than queued while locked or without permission: a break nobody can see is pointless, and only a press should open System Settings.
+// Also takes the launch break. Why: skipped rather than queued while locked or without permission: a break nobody can see is pointless, and only a press should open System Settings.
 function takeAutomaticBreak() {
-  if (powerMonitor.getSystemIdleState(1) === 'locked' || !screenPermissionGranted) scheduleAutomaticBreak();
+  if (powerMonitor.getSystemIdleState(1) === 'locked' || !screenPermissionGranted || soundPermissionPending()) scheduleAutomaticBreak();
   else startBreak();
 }
 
@@ -298,8 +359,30 @@ function showInfo() {
   });
 }
 
+function formatBreakTime(milliseconds) {
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function statsMenu() {
+  const { daily, weekly, allTime } = breakTimeTotals(breakLedger.entries);
+  return [
+    { label: 'Break Time', enabled: false },
+    { label: `Daily: ${formatBreakTime(daily)}` },
+    { label: `Weekly: ${formatBreakTime(weekly)}` },
+    { label: `All-Time: ${formatBreakTime(allTime)}` },
+    // Why: without this, a total falling after a failed check would look like a bug that lost the user's breaks.
+    ...(breakLedger.damaged ? [{ type: 'separator' }, { label: 'Some Breaks Failed Verification', enabled: false }] : []),
+  ];
+}
+
 function buildMenu() {
   menu = Menu.buildFromTemplate([
+    { label: 'Stats', submenu: statsMenu() },
     {
       label: 'Settings',
       submenu: [
@@ -342,12 +425,12 @@ function buildMenu() {
           })),
         },
         { type: 'separator' },
-        {
+        ...(steamBuild ? [] : [{
           label: 'Check for Updates',
           type: 'checkbox',
           checked: settings.checkForUpdates,
           click: () => changeSetting('checkForUpdates', !settings.checkForUpdates),
-        },
+        }]),
         { label: 'Info…', click: showInfo },
       ],
     },
@@ -364,7 +447,11 @@ function createTray() {
   // Why: on press, not release, as native menu bar items do; waiting for the release added a noticeable beat. Windows has no press event.
   tray.on(process.platform === 'darwin' ? 'mouse-down' : 'click', startBreak);
   // Why: not setContextMenu, which would make the left click open the menu instead of starting a break.
-  tray.on('right-click', () => tray.popUpContextMenu(menu));
+  tray.on('right-click', () => {
+    // Stats change with every break and every new day.
+    buildMenu();
+    tray.popUpContextMenu(menu);
+  });
 }
 
 if (app.requestSingleInstanceLock()) {
@@ -373,12 +460,19 @@ if (app.requestSingleInstanceLock()) {
     // Why: the default menu's shortcuts, such as Command+Q, would act on keys meant to end a break.
     Menu.setApplicationMenu(null);
     settings = readSettings();
+    breakLedger = openBreakLedger(app.getPath('userData'));
     createTray();
     screenPermissionGranted = systemPreferences.getMediaAccessStatus('screen') === 'granted';
     prepareBreak();
     scheduleAutomaticBreak();
-    setTimeout(checkForUpdates, UPDATE_CHECK_DELAY_MS);
-    setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
+    // Why: repeated while permission is missing, because the app can't do anything without it and macOS can drop it after an update.
+    if (!screenPermissionGranted) requestScreenPermission();
+    else if (soundPermissionPending()) requestSoundPermission();
+    else takeAutomaticBreak();
+    if (!steamBuild) {
+      setTimeout(checkForUpdates, UPDATE_CHECK_DELAY_MS);
+      setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
+    }
   });
   // Breaks come and go; the app stays in the menu bar between them.
   app.on('window-all-closed', () => {});
